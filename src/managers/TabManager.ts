@@ -451,6 +451,11 @@ export class TabManager {
     return this.tabIndex.get(id);
   }
 
+  /** Find an existing settings tab if one is already open */
+  findSettingsTab(): ManagedTab | undefined {
+    return this.tabs.find(t => t.url.startsWith('data:') && decodeURIComponent(t.url).includes('Settings — Draco'));
+  }
+
   /** Get tabs belonging to a specific workspace (for SpaceManager) */
   getTabsForSpace(spaceId: string): ManagedTab[] {
     return this.tabs.filter(t => t.spaceId === spaceId || t.isPinned);

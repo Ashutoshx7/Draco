@@ -1,5 +1,13 @@
 @import url('https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600&display=swap');
 
+/* Animate workspace color transitions smoothly — modern @property
+   makes the CSS custom property interpolatable. */
+@property --active-space-color {
+  syntax: '<color>';
+  inherits: true;
+  initial-value: #4f52ff;
+}
+
 /* ==========================================================
    ASTRA DESIGN SYSTEM — Zen Browser Inspired
    ========================================================== */
@@ -141,6 +149,7 @@ body,
     color-mix(in srgb, var(--active-space-color) 8%, transparent),
     transparent 42%
   );
+  transition: --active-space-color 0.35s var(--astra-ease-out);
   color: var(--astra-text);
   /* Always fill the BrowserView — Electron main process controls actual width */
   width: 100%;

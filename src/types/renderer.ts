@@ -77,7 +77,7 @@ export interface SpaceContextMenu {
   spaceId: string;
 }
 
-export type PanelMode = 'tabs' | 'spaces' | 'bookmarks' | 'history' | 'settings';
+export type PanelMode = 'tabs' | 'spaces';
 export type SettingsSubPanel = 'main' | 'bookmarks' | 'history';
 
 // --------------------------------------------------
@@ -100,6 +100,7 @@ declare global {
       reorderTabs: (oldIndex: number, newIndex: number) => void;
       hibernateTab: (tabId: string) => void;
       searchSuggestions: (query: string) => void;
+      openSettings: () => void;
       addBookmark: (url: string, title: string) => void;
       removeBookmark: (url: string) => void;
       getBookmarks: () => void;

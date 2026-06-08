@@ -12,15 +12,15 @@ interface BottomBarProps {
 }
 
 const BottomBar: React.FC<BottomBarProps> = ({
-  spaces, activeSpaceId, panelMode,
+  spaces, activeSpaceId,
   onOpenSettings, onSwitchSpace, onSpaceContextMenu, onCreateSpace,
 }) => (
   <div className="sidebar-bottom-bar">
     {/* Settings */}
     <button
-      className={`bottom-bar-settings ${panelMode === 'settings' ? 'active' : ''}`}
+      className="bottom-bar-settings"
       onClick={onOpenSettings}
-      title="Settings"
+      title="Settings (Ctrl+,)"
     >
       <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" strokeLinejoin="round">
         <circle cx="8" cy="8" r="2"/>

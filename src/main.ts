@@ -17,9 +17,11 @@ import { CompactModeManager } from './managers/CompactModeManager';
 import { GlanceManager } from './managers/GlanceManager';
 import { SplitViewManager } from './managers/SplitViewManager';
 import { FingerprintGuard } from './managers/FingerprintGuard';
+import { PrefsManager } from './managers/PrefsManager';
 import { AppDatabase } from './database/Database';
 import { IPC, CONFIG } from './types';
 import { parseUrl } from './utils/url';
+import { getSettingsPageUrl } from './pages/settings';
 
 require('events').defaultMaxListeners = CONFIG.MAX_LISTENERS;
 
@@ -54,6 +56,7 @@ let glanceManager: GlanceManager;
 let splitView: SplitViewManager;
 let fingerprintGuard: FingerprintGuard;
 let database: AppDatabase;
+let prefs: PrefsManager;
 
 // --------------------------------------------------
 // Window creation
@@ -131,6 +134,7 @@ function createWindow(): void {
   shortcutManager.setCompactMode(compactMode);
   shortcutManager.setGlanceManager(glanceManager);
   shortcutManager.setSplitView(splitView);
+  shortcutManager.setOpenSettings(() => openSettings());
 
   // Inject fingerprint protection into each new tab
   tabManager.setOnViewCreated((view) => {
@@ -138,8 +142,9 @@ function createWindow(): void {
     fingerprintGuard.injectProtections(view.webContents);
   });
 
-  // Session restore — try to restore previous tabs, fallback to new tab
-  const restored = tabManager.restoreSession();
+  // Session restore — respects the user's restoreSession preference
+  const shouldRestore = prefs.get('restoreSession');
+  const restored = shouldRestore ? tabManager.restoreSession() : false;
   if (!restored) {
     const firstTab = tabManager.createTab();
     tabManager.switchToTab(firstTab.id);
@@ -148,9 +153,11 @@ function createWindow(): void {
   shortcutManager.initialize();
   mainWindow.on('resize', () => tabManager.layout());
 
-  // Save session before window closes
+  // Save session before window closes — only if restore is enabled
   mainWindow.on('close', () => {
-    tabManager.saveSession();
+    if (prefs.get('restoreSession')) {
+      tabManager.saveSession();
+    }
   });
 
   // --------------------------------------------------
@@ -158,7 +165,7 @@ function createWindow(): void {
   // --------------------------------------------------
 
   ipcMain.on(IPC.REQUEST_TABS, () => tabManager.sendTabsToSidebar());
-  ipcMain.on(IPC.NAVIGATE, (_e, url: string) => tabManager.navigateActiveTab(parseUrl(url)));
+  ipcMain.on(IPC.NAVIGATE, (_e, url: string) => tabManager.navigateActiveTab(parseUrl(url, { searchUrl: prefs.getSearchUrl() })));
   ipcMain.on(IPC.GO_BACK, () => tabManager.goBack());
   ipcMain.on(IPC.GO_FORWARD, () => tabManager.goForward());
   ipcMain.on(IPC.REFRESH, () => tabManager.reload());
@@ -167,6 +174,92 @@ function createWindow(): void {
     const tab = tabManager.createTab(url || undefined);
     tabManager.switchToTab(tab.id);
   });
+
+  ipcMain.on(IPC.OPEN_SETTINGS, () => openSettings());
+
+  ipcMain.handle(IPC.PREF_GET_ALL, () => prefs.snapshot());
+
+  ipcMain.handle(IPC.PREF_SET, (_e, key: string, value: unknown) => {
+    // Validate against known keys; ignore unknowns
+    if (key === 'searchEngine') {
+      if (typeof value === 'string' && ['duckduckgo', 'google', 'bing', 'brave'].includes(value)) {
+        prefs.set('searchEngine', value as any);
+      }
+    } else if (key === 'restoreSession') {
+      prefs.set('restoreSession', value === true || value === '1' || value === 1);
+    }
+    return prefs.snapshot();
+  });
+
+  function openSettings() {
+    const settingsUrl = getSettingsPageUrl();
+    // If an existing tab is already on settings, just switch to it
+    const existing = tabManager.findSettingsTab();
+    if (existing) {
+      tabManager.switchToTab(existing.id);
+      return;
+    }
+    const tab = tabManager.createTab(settingsUrl);
+    tabManager.switchToTab(tab.id);
+
+    // Inject the draco bridge once the page finishes loading
+    const view = tab.view;
+    const inject = () => {
+      const bookmarks = JSON.stringify(database.getBookmarks());
+      const history = JSON.stringify(database.getFullHistory());
+      const prefsSnapshot = JSON.stringify(prefs.snapshot());
+      view.webContents.executeJavaScript(`
+        (function() {
+          const __prefs = ${prefsSnapshot};
+          window.draco = {
+            getBookmarks: () => Promise.resolve(${bookmarks}),
+            getHistory: () => Promise.resolve(${history}),
+            getPrefs: () => Promise.resolve(__prefs),
+            setPref: (key, value) => {
+              __prefs[key] = value;
+              console.log('__DRACO_SET_PREF__:' + JSON.stringify({ key, value }));
+              return Promise.resolve(value);
+            },
+            navigate: (url) => { window.location.href = url; },
+            clearHistory: () => {
+              console.log('__DRACO_CLEAR_HISTORY__');
+              return Promise.resolve();
+            },
+          };
+          window.dispatchEvent(new Event('draco-ready'));
+        })();
+      `).catch(() => { /* page navigated away */ });
+    };
+    view.webContents.on('did-finish-load', () => {
+      const u = view.webContents.getURL();
+      if (u.startsWith('data:') && decodeURIComponent(u).includes('Settings — Draco')) {
+        inject();
+      }
+    });
+    view.webContents.on('console-message', (_e, _level, message) => {
+      if (message === '__DRACO_CLEAR_HISTORY__') {
+        database.clearHistory();
+        sidebarView.webContents.send(IPC.HISTORY_RESULT, []);
+        view.webContents.executeJavaScript(`
+          if (window.draco) {
+            window.draco.getHistory = () => Promise.resolve([]);
+            document.getElementById('history-list').innerHTML = '<div class="empty">No history yet.</div>';
+          }
+        `).catch(() => { /* ignore */ });
+        return;
+      }
+      if (message.startsWith('__DRACO_SET_PREF__:')) {
+        try {
+          const { key, value } = JSON.parse(message.slice('__DRACO_SET_PREF__:'.length));
+          if (key === 'searchEngine' && typeof value === 'string' && ['duckduckgo', 'google', 'bing', 'brave'].includes(value)) {
+            prefs.set('searchEngine', value);
+          } else if (key === 'restoreSession') {
+            prefs.set('restoreSession', !!value);
+          }
+        } catch { /* malformed message, ignore */ }
+      }
+    });
+  }
 
   ipcMain.on(IPC.CLOSE_TAB, (_e, tabId: string) => tabManager.closeTab(tabId));
   ipcMain.on(IPC.SWITCH_TAB, (_e, tabId: string) => tabManager.switchToTab(tabId));
@@ -381,6 +474,7 @@ app.on('ready', async () => {
   // (AdBlocker fetches filter lists from network — don't block window creation on it)
   const adBlocker = new AdBlocker();
   database = new AppDatabase();
+  prefs = new PrefsManager(database);
 
   // Start AdBlocker async, then open window immediately — tabs will be protected
   // by the time the user loads a real URL (AdBlocker is fast on second run via cache)

@@ -1,15 +1,11 @@
 import { CONFIG } from '../types';
+import { getSettingsPageUrl, isSettingsUrl } from '../pages/settings';
 
-/**
- * Bang shortcuts — Helium's most popular productivity feature.
- *
- * Helium patches Chromium's AutocompleteInput to detect bang patterns
- * anywhere in the query (not just prefix like DuckDuckGo).
- *
- * Example: "react hooks !mdn" → searches MDN for "react hooks"
- *          "!g electron api" → searches Google for "electron api"
- *          "cats !yt funny" → searches YouTube for "cats funny"
- */
+interface ParseOptions {
+  /** Override the default search URL (used to inject the user's chosen engine) */
+  searchUrl?: string;
+}
+
 const BANGS: Record<string, string> = {
   '!g':    'https://www.google.com/search?q=',
   '!d':    'https://duckduckgo.com/?q=',
@@ -28,13 +24,6 @@ const BANGS: Record<string, string> = {
   '!t':    'https://translate.google.com/?sl=auto&tl=en&text=',
 };
 
-/**
- * Try to extract a bang from anywhere in the input.
- * Returns { bang, query } if found, null otherwise.
- *
- * Helium's innovation: bangs work ANYWHERE in the query, not just at the start.
- * "react hooks !mdn" → bang="!mdn", query="react hooks"
- */
 function extractBang(input: string): { bang: string; query: string } | null {
   const words = input.split(/\s+/);
   for (let i = 0; i < words.length; i++) {
@@ -51,31 +40,33 @@ function extractBang(input: string): { bang: string; query: string } | null {
  * Parses user input and returns a navigable URL.
  *
  * Rules (in priority order):
- *   1. Bang shortcuts (!g, !yt, etc.) — anywhere in input (Helium pattern)
- *   2. If input contains spaces or no dot → treat as search query
- *   3. If input has no protocol → prepend https://
- *   4. Otherwise → use as-is
+ *   1. Internal scheme (draco://settings) → resolve to data URL
+ *   2. Bang shortcuts (!g, !yt, etc.) — anywhere in input
+ *   3. Spaces or no dot → search query (uses opts.searchUrl or CONFIG.SEARCH_URL)
+ *   4. Missing protocol → prepend https://
+ *   5. Otherwise → use as-is
  */
-export function parseUrl(input: string): string {
+export function parseUrl(input: string, opts: ParseOptions = {}): string {
   const trimmed = input.trim();
 
   if (trimmed.length === 0) {
     return CONFIG.DEFAULT_URL;
   }
 
-  // 1. Check for bang shortcut (Helium-style, anywhere in query)
+  if (isSettingsUrl(trimmed)) {
+    return getSettingsPageUrl();
+  }
+
   const bangResult = extractBang(trimmed);
   if (bangResult) {
-    const searchUrl = BANGS[bangResult.bang];
-    return `${searchUrl}${encodeURIComponent(bangResult.query)}`;
+    return `${BANGS[bangResult.bang]}${encodeURIComponent(bangResult.query)}`;
   }
 
-  // 2. Has spaces or no dot = search query
+  const searchUrl = opts.searchUrl || CONFIG.SEARCH_URL;
   if (trimmed.includes(' ') || !trimmed.includes('.')) {
-    return `${CONFIG.SEARCH_URL}${encodeURIComponent(trimmed)}`;
+    return `${searchUrl}${encodeURIComponent(trimmed)}`;
   }
 
-  // 3. Missing protocol = add https
   if (!trimmed.startsWith('http://') && !trimmed.startsWith('https://')) {
     return `https://${trimmed}`;
   }

@@ -12,5 +12,7 @@
     "moduleResolution": "node",
     "resolveJsonModule": true,
     "jsx": "react-jsx"
-  }
+  },
+  "include": ["src/**/*", "*.ts", "*.d.ts"],
+  "exclude": ["node_modules", "dist", "out", ".vite", "desktop", "landing-page"]
 }

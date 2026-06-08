@@ -30,6 +30,9 @@ contextBridge.exposeInMainWorld('astra', {
   // URL suggestions
   searchSuggestions: (query: string) => ipcRenderer.send('search-suggestions', query),
 
+  // Settings page
+  openSettings: () => ipcRenderer.send('open-settings'),
+
   // Bookmarks
   addBookmark: (url: string, title: string) => ipcRenderer.send('add-bookmark', { url, title }),
   removeBookmark: (url: string) => ipcRenderer.send('remove-bookmark', url),

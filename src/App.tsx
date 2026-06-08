@@ -1,10 +1,10 @@
-import React, { useState, useCallback, useMemo, useRef } from 'react';
+import React, { useState, useCallback, useMemo, useRef, useEffect } from 'react';
 
 // Types
 import type {
   Tab, SpaceData, UrlSuggestion, Bookmark, HistoryEntry,
   DownloadItem, FindResult, CompactState, GlanceState,
-  SpaceContextMenu as SpaceContextMenuType, PanelMode, SettingsSubPanel,
+  SpaceContextMenu as SpaceContextMenuType, PanelMode,
 } from './types/renderer';
 
 // Hooks
@@ -18,7 +18,6 @@ import PinnedTabs from './components/PinnedTabs';
 import FindBar from './components/FindBar';
 import TabList from './components/TabList';
 import SpacesPanel from './components/SpacesPanel';
-import SettingsPanel from './components/SettingsPanel';
 import DownloadsSection from './components/DownloadsSection';
 import BottomBar from './components/BottomBar';
 import SpaceContextMenu from './components/SpaceContextMenu';
@@ -54,8 +53,15 @@ const App: React.FC = () => {
   const [activeSpaceId, setActiveSpaceId] = useState('');
 
   // ── UI state ──────────────────────────────────────
-  const [panelMode, setPanelMode] = useState<PanelMode>('tabs');
-  const [settingsSubPanel, setSettingsSubPanel] = useState<SettingsSubPanel>('main');
+  const [panelMode, setPanelMode] = useState<PanelMode>(() => {
+    try {
+      const saved = localStorage.getItem('draco-panel-mode');
+      if (saved === 'tabs' || saved === 'spaces') {
+        return saved;
+      }
+    } catch { /* localStorage unavailable */ }
+    return 'tabs';
+  });
   const [compactState, setCompactState] = useState<CompactState>({ mode: 'expanded', expanded: true, sidebarVisible: true, sidebarWidth: 300 });
   const [glanceState, setGlanceState] = useState<GlanceState>({ active: false, url: '' });
   const [urlCopiedToast, setUrlCopiedToast] = useState(false);
@@ -158,6 +164,11 @@ const App: React.FC = () => {
     if (mode === 'history') window.astra.getHistory();
     setPanelMode((prev) => (prev === mode ? 'tabs' : mode));
   }, []);
+
+  // Persist sidebar panel mode across sessions
+  useEffect(() => {
+    try { localStorage.setItem('draco-panel-mode', panelMode); } catch { /* localStorage unavailable */ }
+  }, [panelMode]);
 
   const switchTab = useCallback((id: string) => window.astra.switchTab(id), []);
   const pinTab = useCallback((id: string) => window.astra.pinTab(id), []);
@@ -285,15 +296,6 @@ const App: React.FC = () => {
             onCreateSpace={() => window.astra.createSpace({ name: '', color: '', icon: '' })}
           />
         )}
-        {panelMode === 'settings' && (
-          <SettingsPanel
-            subPanel={settingsSubPanel}
-            bookmarks={bookmarks}
-            history={history}
-            onSubPanel={setSettingsSubPanel}
-            onNavigate={(url) => { window.astra.navigate(url); setPanelMode('tabs'); }}
-          />
-        )}
       </div>
 
       {/* Downloads */}
@@ -304,7 +306,7 @@ const App: React.FC = () => {
         spaces={spaces}
         activeSpaceId={activeSpaceId}
         panelMode={panelMode}
-        onOpenSettings={() => { setSettingsSubPanel('main'); setMode('settings'); }}
+        onOpenSettings={() => window.astra.openSettings()}
         onSwitchSpace={window.astra.switchSpace}
         onSpaceContextMenu={openSpaceContextMenu}
         onCreateSpace={() => window.astra.createSpace({ name: '', color: '', icon: '' })}

@@ -36,6 +36,11 @@ export class AppDatabase {
   private readonly stmtGetSpaces: Database.Statement;
   private readonly stmtGetSpace: Database.Statement;
 
+  // Prefs statements
+  private readonly stmtGetPref: Database.Statement;
+  private readonly stmtSetPref: Database.Statement;
+  private readonly stmtGetAllPrefs: Database.Statement;
+
   constructor() {
     const dbPath = path.join(app.getPath('userData'), 'astra.db');
     this.db = new Database(dbPath);
@@ -100,6 +105,10 @@ export class AppDatabase {
     this.stmtGetSpaces = this.db.prepare(`SELECT * FROM spaces ORDER BY position ASC`);
     this.stmtGetSpace = this.db.prepare(`SELECT * FROM spaces WHERE id = ?`);
 
+    this.stmtGetPref = this.db.prepare(`SELECT value FROM prefs WHERE key = ?`);
+    this.stmtSetPref = this.db.prepare(`INSERT INTO prefs (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value`);
+    this.stmtGetAllPrefs = this.db.prepare(`SELECT key, value FROM prefs`);
+
     console.log('[Astra] 💾 Database initialized:', dbPath);
   }
 
@@ -150,6 +159,23 @@ export class AppDatabase {
     if (query.length < 2) return [];
     const p = `%${query}%`;
     return this.stmtSearchSuggestions.all(p, p, p, p, CONFIG.MAX_SUGGESTIONS) as UrlSuggestion[];
+  }
+
+  // Prefs
+  getPref(key: string): string | null {
+    const row = this.stmtGetPref.get(key) as { value: string } | undefined;
+    return row?.value ?? null;
+  }
+
+  setPref(key: string, value: string): void {
+    this.stmtSetPref.run(key, value);
+  }
+
+  getAllPrefs(): Record<string, string> {
+    const rows = this.stmtGetAllPrefs.all() as { key: string; value: string }[];
+    const out: Record<string, string> = {};
+    for (const r of rows) out[r.key] = r.value;
+    return out;
   }
 
   // Session restore
@@ -237,6 +263,10 @@ export class AppDatabase {
         icon TEXT DEFAULT '🌐',
         position INTEGER DEFAULT 0,
         created_at INTEGER NOT NULL
+      );
+      CREATE TABLE IF NOT EXISTS prefs (
+        key TEXT PRIMARY KEY,
+        value TEXT NOT NULL
       );
       CREATE INDEX IF NOT EXISTS idx_history_url ON history(url);
       CREATE INDEX IF NOT EXISTS idx_history_title ON history(title);

@@ -33,6 +33,7 @@ export class ShortcutManager {
   private compactMode: CompactModeManager | null = null;
   private glanceManager: GlanceManager | null = null;
   private splitView: SplitViewManager | null = null;
+  private onOpenSettings: (() => void) | null = null;
 
   constructor(
     private readonly tabManager: TabManager,
@@ -41,6 +42,10 @@ export class ShortcutManager {
     private readonly getMainWindow: () => Electron.BaseWindow | null,
   ) {
     this.handler = this.handleInput.bind(this);
+  }
+
+  setOpenSettings(cb: () => void): void {
+    this.onOpenSettings = cb;
   }
 
   setSpaceManager(sm: SpaceManager): void {
@@ -80,6 +85,13 @@ export class ShortcutManager {
       event.preventDefault();
       const tab = this.tabManager.createTab();
       this.tabManager.switchToTab(tab.id);
+      return;
+    }
+
+    // Ctrl+, → Open settings
+    if (ctrl && input.key === ',') {
+      event.preventDefault();
+      this.onOpenSettings?.();
       return;
     }
 

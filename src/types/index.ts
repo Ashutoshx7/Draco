@@ -142,6 +142,11 @@ export const IPC = {
   // Hibernate
   HIBERNATE_TAB: 'hibernate-tab',
 
+  // Settings page
+  OPEN_SETTINGS: 'open-settings',
+  PREF_GET_ALL: 'pref:get-all',
+  PREF_SET: 'pref:set',
+
   // Main → Sidebar
   TABS_UPDATED: 'tabs-updated',
   URL_CHANGED: 'url-changed',
