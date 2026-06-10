@@ -65,6 +65,22 @@
   --astra-duration-slow: 0.4s;
 }
 
+/* Light theme overrides — activated when data-theme="light" is set on <html> */
+:root[data-theme="light"] {
+  --astra-bg: #f0f0f5;
+  --astra-bg-rgb: 240, 240, 245;
+  --astra-surface: rgba(0, 0, 0, 0.04);
+  --astra-surface-hover: rgba(0, 0, 0, 0.07);
+  --astra-border: rgba(0, 0, 0, 0.1);
+  --astra-text: rgba(0, 0, 0, 0.88);
+  --astra-text-secondary: rgba(0, 0, 0, 0.55);
+  --astra-text-muted: rgba(0, 0, 0, 0.38);
+  --astra-element-bg: color-mix(in oklch, black 6%, transparent);
+  --astra-element-bg-hover: color-mix(in oklch, black 10%, transparent);
+  --astra-shadow-sm: 0 1px 3px rgba(0, 0, 0, 0.06);
+  --astra-shadow-md: 0 4px 12px rgba(0, 0, 0, 0.08);
+}
+
 /* === RESET === */
 * {
   margin: 0;
@@ -169,6 +185,9 @@ body,
   will-change: transform;
   backface-visibility: hidden;
 }
+
+/* Workspace glow off — applied via pref */
+html.no-space-glow .sidebar { background-image: none; }
 
 button,
 input,
@@ -394,6 +413,33 @@ select,
 .url-input-wrapper:focus-within {
   background: rgba(255, 255, 255, 0.05);
   box-shadow: 0 4px 24px rgba(0, 0, 0, 0.3);
+}
+
+.urlbar-always-floating .url-input-wrapper {
+  background: rgba(255, 255, 255, 0.08);
+  box-shadow: 0 4px 24px rgba(0, 0, 0, 0.28);
+}
+
+.urlbar-never-floating .url-input-wrapper:focus-within {
+  background: rgba(255, 255, 255, 0.08);
+  box-shadow: none;
+}
+
+.layout-sidebar-toolbar .url-bar {
+  padding-bottom: 7px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+}
+
+.layout-collapsed-sidebar .nav-buttons {
+  justify-content: center;
+}
+
+.layout-collapsed-sidebar .nav-group-right {
+  display: none;
+}
+
+.compact-toolbar-popup .url-bar {
+  transition: opacity 0.16s ease, transform 0.16s ease;
 }
 
 /* Search icon left — Zen identity-icon style */
@@ -785,6 +831,34 @@ select,
 .tab-close:hover {
   background: rgba(255, 255, 255, 0.12);
   color: var(--astra-text);
+}
+
+/* Tab thumbnail popup */
+.tab {
+  position: relative;
+}
+
+.tab-thumbnail-popup {
+  position: absolute;
+  left: calc(100% + 8px);
+  top: 50%;
+  transform: translateY(-50%);
+  z-index: 200;
+  border-radius: 8px;
+  overflow: hidden;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.5);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  pointer-events: none;
+  width: 240px;
+  height: 150px;
+  background: var(--astra-bg-secondary, #1e1e3f);
+}
+
+.tab-thumbnail-popup img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
 }
 
 /* Hibernated tab */
@@ -1692,4 +1766,20 @@ select,
 
 ::-webkit-scrollbar-thumb:hover {
   background: rgba(255, 255, 255, 0.15);
+}
+
+/* ── Pref-driven sidebar CSS ──────────────────────────────── */
+
+.smooth-scrolling * {
+  scroll-behavior: smooth;
+}
+
+.always-show-scrollbars ::-webkit-scrollbar {
+  display: block !important;
+  width: 6px;
+  height: 6px;
+}
+
+.always-underline-links a {
+  text-decoration: underline !important;
 }
