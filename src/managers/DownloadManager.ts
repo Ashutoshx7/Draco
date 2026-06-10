@@ -1,4 +1,6 @@
-import { WebContentsView, session } from 'electron';
+import { WebContentsView, session, dialog, app } from 'electron';
+import path from 'node:path';
+import fs from 'node:fs';
 import { DownloadItem as AstraDownloadItem, IPC } from '../types';
 
 /**
@@ -12,10 +14,20 @@ export class DownloadManager {
   private readonly downloads: Map<string, AstraDownloadItem> = new Map();
   private downloadCounter = 0;
   private initialized = false;
+  private getAlwaysAsk: (() => boolean) = () => false;
+  private getDownloadPath: (() => string) = () => 'Downloads';
 
   constructor(
     private readonly sidebarView: WebContentsView,
   ) {}
+
+  setAlwaysAskProvider(fn: () => boolean): void {
+    this.getAlwaysAsk = fn;
+  }
+
+  setDownloadPathProvider(fn: () => string): void {
+    this.getDownloadPath = fn;
+  }
 
   /**
    * Attach download listener to the default session ONCE.
@@ -27,11 +39,29 @@ export class DownloadManager {
     this.initialized = true;
 
     session.defaultSession.on('will-download', (_event, item) => {
+      const filename = item.getFilename();
+      const downloadDir = this.resolveDownloadDir();
+      const defaultPath = path.join(downloadDir, filename);
+
+      if (this.getAlwaysAsk()) {
+        const result = dialog.showSaveDialogSync({
+          defaultPath,
+        });
+        if (result) {
+          item.setSavePath(result);
+        } else {
+          item.cancel();
+          return;
+        }
+      } else {
+        item.setSavePath(defaultPath);
+      }
+
       const id = `dl-${++this.downloadCounter}`;
 
       const download: AstraDownloadItem = {
         id,
-        filename: item.getFilename(),
+        filename,
         url: item.getURL(),
         totalBytes: item.getTotalBytes(),
         receivedBytes: 0,
@@ -61,5 +91,20 @@ export class DownloadManager {
 
   private sendUpdate(download: AstraDownloadItem): void {
     this.sidebarView.webContents.send(IPC.DOWNLOAD_UPDATED, download);
+  }
+
+  private resolveDownloadDir(): string {
+    const configured = (this.getDownloadPath() || '').trim();
+    const fallback = app.getPath('downloads');
+    const dir = configured && configured !== 'Downloads'
+      ? (path.isAbsolute(configured) ? configured : path.join(fallback, configured))
+      : fallback;
+
+    try {
+      fs.mkdirSync(dir, { recursive: true });
+      return dir;
+    } catch {
+      return fallback;
+    }
   }
 }
