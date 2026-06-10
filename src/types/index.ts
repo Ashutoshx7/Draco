@@ -16,6 +16,7 @@ export interface ManagedTab {
   isHibernated: boolean;
   zoomLevel: number;
   spaceId: string;
+  thumbnail?: string;
 }
 
 export interface TabData {
@@ -29,6 +30,7 @@ export interface TabData {
   isHibernated: boolean;
   zoomLevel: number;
   spaceId: string;
+  thumbnail?: string;
 }
 
 export interface TabsUpdatedPayload {
@@ -146,6 +148,7 @@ export const IPC = {
   OPEN_SETTINGS: 'open-settings',
   PREF_GET_ALL: 'pref:get-all',
   PREF_SET: 'pref:set',
+  PREFS_UPDATED: 'prefs:updated',
 
   // Main → Sidebar
   TABS_UPDATED: 'tabs-updated',
