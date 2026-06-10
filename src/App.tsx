@@ -52,6 +52,14 @@ const App: React.FC = () => {
   const [spaces, setSpaces] = useState<SpaceData[]>([]);
   const [activeSpaceId, setActiveSpaceId] = useState('');
 
+  // ── Prefs ─────────────────────────────────────────
+  const [middleClickClose, setMiddleClickClose] = useState(true);
+  const [showNewTabButton, setShowNewTabButton] = useState(true);
+  const [newTabButtonTop, setNewTabButtonTop] = useState(true);
+  const [browserLayout, setBrowserLayout] = useState('only-sidebar');
+  const [urlBarBehavior, setUrlBarBehavior] = useState('floating-typing');
+  const [compactToolbarPopup, setCompactToolbarPopup] = useState(false);
+
   // ── UI state ──────────────────────────────────────
   const [panelMode, setPanelMode] = useState<PanelMode>(() => {
     try {
@@ -170,6 +178,43 @@ const App: React.FC = () => {
     try { localStorage.setItem('draco-panel-mode', panelMode); } catch { /* localStorage unavailable */ }
   }, [panelMode]);
 
+  // Reflect prefs (workspace glow, accent color, theme) on the sidebar root
+  useEffect(() => {
+    function applyPrefs(p: Record<string, boolean | string>) {
+      const root = document.documentElement;
+      root.classList.toggle('no-space-glow', p.spaceGlow === false);
+      root.classList.toggle('smooth-scrolling', p.smoothScrolling !== false);
+      root.classList.toggle('always-show-scrollbars', p.alwaysShowScrollbars === true);
+      root.classList.toggle('always-underline-links', p.alwaysUnderlineLinks === true);
+      if (typeof p.middleClickClose === 'boolean') setMiddleClickClose(p.middleClickClose);
+      if (typeof p.showNewTabButton === 'boolean') setShowNewTabButton(p.showNewTabButton);
+      if (typeof p.newTabButtonTop === 'boolean') setNewTabButtonTop(p.newTabButtonTop);
+      if (typeof p.compactToolbarPopup === 'boolean') setCompactToolbarPopup(p.compactToolbarPopup);
+      if (typeof p.browserLayout === 'string') {
+        setBrowserLayout(p.browserLayout);
+        root.dataset.browserLayout = p.browserLayout;
+      }
+      if (typeof p.urlBarBehavior === 'string') {
+        setUrlBarBehavior(p.urlBarBehavior);
+        root.dataset.urlBarBehavior = p.urlBarBehavior;
+      }
+
+      if (typeof p.accentColor === 'string' && /^#[0-9a-fA-F]{6}$/.test(p.accentColor)) {
+        root.style.setProperty('--astra-primary', p.accentColor);
+        root.style.setProperty('--accent', p.accentColor);
+      }
+
+      if (typeof p.themeMode === 'string') {
+        const resolved = p.themeMode === 'system'
+          ? (window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light')
+          : p.themeMode;
+        root.dataset.theme = resolved;
+      }
+    }
+
+    window.astra.onPrefsUpdated(applyPrefs);
+  }, []);
+
   const switchTab = useCallback((id: string) => window.astra.switchTab(id), []);
   const pinTab = useCallback((id: string) => window.astra.pinTab(id), []);
   const unpinTab = useCallback((id: string) => window.astra.unpinTab(id), []);
@@ -180,6 +225,9 @@ const App: React.FC = () => {
 
   const sidebarClasses = [
     'sidebar',
+    `layout-${browserLayout}`,
+    `urlbar-${urlBarBehavior}`,
+    compactToolbarPopup ? 'compact-toolbar-popup' : '',
     !expanded && !sidebarVisible && !animating ? 'sidebar-hidden' : '',
     animating === 'hiding' ? 'sidebar-sliding-out' : '',
     !expanded && sidebarVisible && animating !== 'hiding' ? 'sidebar-overlay' : '',
@@ -281,6 +329,9 @@ const App: React.FC = () => {
             onSwitch={switchTab}
             onPin={pinTab}
             onClose={closeTab}
+            middleClickClose={middleClickClose}
+            showNewTabButton={showNewTabButton}
+            newTabButtonTop={newTabButtonTop}
             onDragStart={handleDragStart}
             onDragOver={handleDragOver}
             onDrop={handleDrop}
