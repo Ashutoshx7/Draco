@@ -5,7 +5,7 @@
  *               SpaceManager, CompactModeManager, GlanceManager
  */
 
-import { app, BaseWindow, WebContentsView, ipcMain } from 'electron';
+import { app, BaseWindow, WebContentsView, ipcMain, session, dialog } from 'electron';
 import path from 'node:path';
 import started from 'electron-squirrel-startup';
 
@@ -106,6 +106,14 @@ function createWindow(): void {
   const preloadPath = path.join(__dirname, 'preload.js');
 
   tabManager = new TabManager(mainWindow, sidebarView, database, preloadPath);
+  tabManager.setThumbnailsEnabled(prefs.getBool('tabThumbnails'));
+  tabManager.setAlwaysAskDownload(() => prefs.getBool('alwaysAskDownload'));
+  tabManager.setDownloadPath(() => prefs.getString('downloadPath'));
+  tabManager.setNewTabUrlProvider(() => {
+    const choice = prefs.getString('newTabPage');
+    if (choice === 'blank') return 'about:blank';
+    return null; // fall through to cached Draco Home
+  });
   spaceManager = new SpaceManager(database, sidebarView, tabManager);
 
   // CompactMode: controls sidebar auto-hide.
@@ -118,6 +126,10 @@ function createWindow(): void {
 
   // Glance: link preview overlay
   glanceManager = new GlanceManager(mainWindow, sidebarView, tabManager);
+  tabManager.setGlanceRequestHandler((url, x, y) => {
+    if (!prefs.getBool('glanceEnabled')) return;
+    glanceManager.open(url, x, y);
+  });
 
   // SplitView: side-by-side tabs
   splitView = new SplitViewManager(mainWindow, sidebarView, tabManager);
@@ -135,11 +147,108 @@ function createWindow(): void {
   shortcutManager.setGlanceManager(glanceManager);
   shortcutManager.setSplitView(splitView);
   shortcutManager.setOpenSettings(() => openSettings());
+  shortcutManager.setConfirmQuit(() => prefs.getBool('confirmQuit'));
+  shortcutManager.setShortcutProvider((key, fallback) => prefs.getString(key) || fallback);
 
-  // Inject fingerprint protection into each new tab
+  let lastCompactTarget: 'expanded' | 'hidden' | null = null;
+  function syncBrowserLayoutPrefs(): void {
+    const target = (prefs.getString('browserLayout') === 'collapsed-sidebar' || prefs.getBool('compactSidebar'))
+      ? 'hidden'
+      : 'expanded';
+    if (target === lastCompactTarget) return;
+    lastCompactTarget = target;
+    compactMode.setMode(target);
+  }
+
+  const contentPrefsBound = new WeakSet<Electron.WebContents>();
+  function injectContentPrefs(wc: Electron.WebContents): void {
+    const css: string[] = [];
+    if (prefs.getBool('alwaysShowScrollbars')) {
+      css.push('::-webkit-scrollbar { display: block !important; }');
+    }
+    if (prefs.getBool('alwaysUnderlineLinks')) {
+      css.push('a { text-decoration: underline !important; }');
+    }
+
+    const payload = JSON.stringify({
+      css: css.join('\n'),
+      glanceEnabled: prefs.getBool('glanceEnabled'),
+      glanceTrigger: prefs.getString('glanceTrigger') || 'alt-click',
+    });
+
+    wc.executeJavaScript(`
+      (() => {
+        const prefs = ${payload};
+        let style = document.getElementById('__astra_content_prefs__');
+        if (!style) {
+          style = document.createElement('style');
+          style.id = '__astra_content_prefs__';
+          document.documentElement.appendChild(style);
+        }
+        style.textContent = prefs.css || '';
+
+        window.__astraGlancePrefs = {
+          enabled: prefs.glanceEnabled,
+          trigger: prefs.glanceTrigger,
+        };
+        if (!window.__astraGlanceInstalled) {
+          window.__astraGlanceInstalled = true;
+          document.addEventListener('click', event => {
+            const gp = window.__astraGlancePrefs || {};
+            if (!gp.enabled) return;
+            const anchor = event.target && event.target.closest ? event.target.closest('a[href]') : null;
+            if (!anchor || !anchor.href) return;
+            const trigger = gp.trigger || 'alt-click';
+            const matches =
+              (trigger === 'alt-click' && event.altKey) ||
+              (trigger === 'ctrl-click' && event.ctrlKey) ||
+              (trigger === 'shift-click' && event.shiftKey) ||
+              (trigger === 'meta-click' && event.metaKey);
+            if (!matches) return;
+            event.preventDefault();
+            event.stopPropagation();
+            console.log('__ASTRA_GLANCE_OPEN__:' + JSON.stringify({
+              url: anchor.href,
+              x: event.clientX,
+              y: event.clientY,
+            }));
+          }, true);
+        }
+      })();
+    `).catch(() => { /* page may not permit injection or may have navigated */ });
+  }
+
+  // Apply content-level prefs to a single WebContents
+  function applyContentPrefs(wc: Electron.WebContents): void {
+    const zoom = parseInt(prefs.getString('defaultZoom') || '100', 10) / 100;
+    wc.setZoomFactor(zoom);
+    injectContentPrefs(wc);
+    if (contentPrefsBound.has(wc)) return;
+    contentPrefsBound.add(wc);
+    wc.on('did-finish-load', () => injectContentPrefs(wc));
+  }
+
+  // Broadcast pref changes to the sidebar so it can react (space glow, etc.)
+  prefs.onChange(() => {
+    sidebarView.webContents.send(IPC.PREFS_UPDATED, prefs.snapshot());
+    tabManager.setThumbnailsEnabled(prefs.getBool('tabThumbnails'));
+    syncBrowserLayoutPrefs();
+    // Re-apply zoom to all open tabs when defaultZoom changes
+    for (const view of tabManager.getAllViews()) {
+      applyContentPrefs(view.webContents);
+    }
+  });
+  // Initial push once the sidebar finishes loading
+  sidebarView.webContents.once('did-finish-load', () => {
+    sidebarView.webContents.send(IPC.PREFS_UPDATED, prefs.snapshot());
+  });
+  syncBrowserLayoutPrefs();
+
+  // Inject fingerprint protection into each new tab + apply content prefs
   tabManager.setOnViewCreated((view) => {
     shortcutManager.attachToView(view);
     fingerprintGuard.injectProtections(view.webContents);
+    applyContentPrefs(view.webContents);
   });
 
   // Session restore — respects the user's restoreSession preference
@@ -154,7 +263,19 @@ function createWindow(): void {
   mainWindow.on('resize', () => tabManager.layout());
 
   // Save session before window closes — only if restore is enabled
-  mainWindow.on('close', () => {
+  mainWindow.on('close', (e) => {
+    const tabCount = tabManager.getAllTabIds().length;
+    if (prefs.getBool('confirmMultiTabClose') && tabCount > 1) {
+      const choice = dialog.showMessageBoxSync(mainWindow!, {
+        type: 'question',
+        buttons: ['Close All Tabs', 'Cancel'],
+        defaultId: 0,
+        cancelId: 1,
+        message: `Close ${tabCount} tabs?`,
+        detail: 'You have multiple tabs open. Close them all and exit?',
+      });
+      if (choice === 1) { e.preventDefault(); return; }
+    }
     if (prefs.get('restoreSession')) {
       tabManager.saveSession();
     }
@@ -172,7 +293,11 @@ function createWindow(): void {
 
   ipcMain.on(IPC.NEW_TAB, (_e, url?: string) => {
     const tab = tabManager.createTab(url || undefined);
-    tabManager.switchToTab(tab.id);
+    if (prefs.getBool('compactToolbarPopup')) compactMode.flashSidebar();
+    // Only auto-switch if the user wants it (or this is a user-initiated new tab with no URL)
+    if (!url || prefs.getBool('switchToNewTab')) {
+      tabManager.switchToTab(tab.id);
+    }
   });
 
   ipcMain.on(IPC.OPEN_SETTINGS, () => openSettings());
@@ -180,14 +305,7 @@ function createWindow(): void {
   ipcMain.handle(IPC.PREF_GET_ALL, () => prefs.snapshot());
 
   ipcMain.handle(IPC.PREF_SET, (_e, key: string, value: unknown) => {
-    // Validate against known keys; ignore unknowns
-    if (key === 'searchEngine') {
-      if (typeof value === 'string' && ['duckduckgo', 'google', 'bing', 'brave'].includes(value)) {
-        prefs.set('searchEngine', value as any);
-      }
-    } else if (key === 'restoreSession') {
-      prefs.set('restoreSession', value === true || value === '1' || value === 1);
-    }
+    prefs.set(key, value); // Registry validates — invalid prefs are silently dropped
     return prefs.snapshot();
   });
 
@@ -205,20 +323,31 @@ function createWindow(): void {
     // Inject the draco bridge once the page finishes loading
     const view = tab.view;
     const inject = () => {
-      const bookmarks = JSON.stringify(database.getBookmarks());
-      const history = JSON.stringify(database.getFullHistory());
+      const bookmarks     = JSON.stringify(database.getBookmarks());
+      const history       = JSON.stringify(database.getFullHistory());
       const prefsSnapshot = JSON.stringify(prefs.snapshot());
       view.webContents.executeJavaScript(`
         (function() {
           const __prefs = ${prefsSnapshot};
           window.draco = {
             getBookmarks: () => Promise.resolve(${bookmarks}),
-            getHistory: () => Promise.resolve(${history}),
-            getPrefs: () => Promise.resolve(__prefs),
+            getHistory:   () => Promise.resolve(${history}),
+            getPrefs:     () => Promise.resolve(__prefs),
             setPref: (key, value) => {
               __prefs[key] = value;
               console.log('__DRACO_SET_PREF__:' + JSON.stringify({ key, value }));
               return Promise.resolve(value);
+            },
+            performAction: (action, payload) => {
+              console.log('__DRACO_ACTION__:' + JSON.stringify({ action, payload }));
+              return Promise.resolve(true);
+            },
+            _applyPrefs: (nextPrefs) => {
+              Object.assign(__prefs, nextPrefs || {});
+              window.dispatchEvent(new CustomEvent('draco-prefs-updated', { detail: __prefs }));
+            },
+            _toast: (message) => {
+              window.dispatchEvent(new CustomEvent('draco-toast', { detail: message }));
             },
             navigate: (url) => { window.location.href = url; },
             clearHistory: () => {
@@ -230,12 +359,28 @@ function createWindow(): void {
         })();
       `).catch(() => { /* page navigated away */ });
     };
+
     view.webContents.on('did-finish-load', () => {
-      const u = view.webContents.getURL();
-      if (u.startsWith('data:') && decodeURIComponent(u).includes('Settings — Draco')) {
-        inject();
-      }
+      inject();
     });
+
+    const pushSettingsPrefs = () => {
+      const snapshot = JSON.stringify(prefs.snapshot());
+      view.webContents.executeJavaScript(`
+        if (window.draco && window.draco._applyPrefs) {
+          window.draco._applyPrefs(${snapshot});
+        }
+      `).catch(() => { /* ignore */ });
+    };
+
+    const showSettingsToast = (message: string) => {
+      view.webContents.executeJavaScript(`
+        if (window.draco && window.draco._toast) {
+          window.draco._toast(${JSON.stringify(message)});
+        }
+      `).catch(() => { /* ignore */ });
+    };
+
     view.webContents.on('console-message', (_e, _level, message) => {
       if (message === '__DRACO_CLEAR_HISTORY__') {
         database.clearHistory();
@@ -243,7 +388,8 @@ function createWindow(): void {
         view.webContents.executeJavaScript(`
           if (window.draco) {
             window.draco.getHistory = () => Promise.resolve([]);
-            document.getElementById('history-list').innerHTML = '<div class="empty">No history yet.</div>';
+            const el = document.getElementById('history-list');
+            if (el) el.innerHTML = '<div class="empty">No history yet.</div>';
           }
         `).catch(() => { /* ignore */ });
         return;
@@ -251,18 +397,47 @@ function createWindow(): void {
       if (message.startsWith('__DRACO_SET_PREF__:')) {
         try {
           const { key, value } = JSON.parse(message.slice('__DRACO_SET_PREF__:'.length));
-          if (key === 'searchEngine' && typeof value === 'string' && ['duckduckgo', 'google', 'bing', 'brave'].includes(value)) {
-            prefs.set('searchEngine', value);
-          } else if (key === 'restoreSession') {
-            prefs.set('restoreSession', !!value);
+          prefs.set(key, value);
+        } catch { /* malformed */ }
+      }
+      if (message.startsWith('__DRACO_ACTION__:')) {
+        try {
+          const { action } = JSON.parse(message.slice('__DRACO_ACTION__:'.length));
+          if (action === 'choose-download-folder') {
+            const dirs = dialog.showOpenDialogSync(mainWindow!, {
+              title: 'Choose download folder',
+              defaultPath: prefs.getString('downloadPath') === 'Downloads'
+                ? app.getPath('downloads')
+                : prefs.getString('downloadPath'),
+              properties: ['openDirectory', 'createDirectory'],
+            });
+            if (dirs?.[0]) {
+              prefs.set('downloadPath', dirs[0]);
+              pushSettingsPrefs();
+              showSettingsToast('Download folder updated.');
+            }
+            return;
           }
-        } catch { /* malformed message, ignore */ }
+          if (action === 'make-default') {
+            const httpOk = app.setAsDefaultProtocolClient('http');
+            const httpsOk = app.setAsDefaultProtocolClient('https');
+            prefs.set('defaultBrowserCheck', true);
+            pushSettingsPrefs();
+            showSettingsToast(httpOk || httpsOk
+              ? 'Default browser request sent to the operating system.'
+              : 'Draco could not become the default browser from this build.');
+            return;
+          }
+        } catch { /* malformed */ }
       }
     });
   }
 
   ipcMain.on(IPC.CLOSE_TAB, (_e, tabId: string) => tabManager.closeTab(tabId));
-  ipcMain.on(IPC.SWITCH_TAB, (_e, tabId: string) => tabManager.switchToTab(tabId));
+  ipcMain.on(IPC.SWITCH_TAB, (_e, tabId: string) => {
+    tabManager.switchToTab(tabId);
+    if (prefs.getBool('compactToolbarPopup')) compactMode.flashSidebar();
+  });
 
   ipcMain.on(IPC.REORDER_TABS, (_e, data: { oldIndex: number; newIndex: number }) => {
     tabManager.reorderTabs(data.oldIndex, data.newIndex);
@@ -476,6 +651,17 @@ app.on('ready', async () => {
   database = new AppDatabase();
   prefs = new PrefsManager(database);
 
+  // Wire DNT header — toggling the pref takes effect immediately because the
+  // hook reads from `prefs` on every request, not from a captured snapshot.
+  session.defaultSession.webRequest.onBeforeSendHeaders((details, callback) => {
+    if (prefs.getBool('dnt')) {
+      details.requestHeaders['DNT'] = '1';
+    } else {
+      delete details.requestHeaders['DNT'];
+    }
+    callback({ requestHeaders: details.requestHeaders });
+  });
+
   // Start AdBlocker async, then open window immediately — tabs will be protected
   // by the time the user loads a real URL (AdBlocker is fast on second run via cache)
   const adBlockerReady = adBlocker.initialize();
@@ -485,9 +671,29 @@ app.on('ready', async () => {
   // Wait in background — blocks are applied to the session once ready
   adBlockerReady.catch((err) => console.error('[Astra] AdBlocker failed:', err));
 
-  app.on('before-quit', () => {
+  let isQuitting = false;
+  app.on('before-quit', async (event) => {
+    if (isQuitting) return;
+    if (!prefs?.getBool('clearOnQuit')) {
+      tabManager?.saveSession();
+      database?.close();
+      return;
+    }
+
+    // User asked to wipe browsing data — delay quit until clear finishes.
+    event.preventDefault();
+    isQuitting = true;
+    try {
+      await session.defaultSession.clearStorageData({
+        storages: ['cookies', 'localstorage', 'indexdb', 'serviceworkers', 'websql', 'shadercache', 'cachestorage'],
+      });
+      await session.defaultSession.clearCache();
+    } catch (err) {
+      console.error('[Astra] clearOnQuit failed:', err);
+    }
     tabManager?.saveSession();
     database?.close();
+    app.quit();
   });
 });
 
