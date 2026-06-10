@@ -32,6 +32,7 @@ contextBridge.exposeInMainWorld('astra', {
 
   // Settings page
   openSettings: () => ipcRenderer.send('open-settings'),
+  onPrefsUpdated: (cb: Function) => ipcRenderer.on('prefs:updated', (_e: any, p: any) => cb(p)),
 
   // Bookmarks
   addBookmark: (url: string, title: string) => ipcRenderer.send('add-bookmark', { url, title }),
