@@ -137,7 +137,9 @@ export class CompactModeManager {
     void _y;
   }
   flashSidebar(): void {
-    return;
+    if (this.mode !== 'hidden') return;
+    this.showOverlay(false);
+    this.queueHide(1100);
   }
   lockForPopup(): void {
     this.popupLocked = true;
