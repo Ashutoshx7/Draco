@@ -13,6 +13,7 @@ export interface Tab {
   isHibernated: boolean;
   zoomLevel: number;
   spaceId: string;
+  thumbnail?: string;
 }
 
 export interface SpaceData {
@@ -101,6 +102,7 @@ declare global {
       hibernateTab: (tabId: string) => void;
       searchSuggestions: (query: string) => void;
       openSettings: () => void;
+      onPrefsUpdated: (cb: (prefs: Record<string, boolean | string>) => void) => void;
       addBookmark: (url: string, title: string) => void;
       removeBookmark: (url: string) => void;
       getBookmarks: () => void;
