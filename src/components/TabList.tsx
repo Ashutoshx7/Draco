@@ -8,6 +8,9 @@ interface TabListProps {
   onSwitch: (id: string) => void;
   onPin: (id: string) => void;
   onClose: (id: string) => void;
+  middleClickClose: boolean;
+  showNewTabButton: boolean;
+  newTabButtonTop: boolean;
   onDragStart: (e: React.DragEvent, index: number, tabId: string) => void;
   onDragOver: (e: React.DragEvent) => void;
   onDrop: (e: React.DragEvent, index: number) => void;
@@ -16,28 +19,10 @@ interface TabListProps {
 
 const TabList: React.FC<TabListProps> = ({
   unpinnedTabs, activeTabId, onSwitch, onPin, onClose,
+  middleClickClose, showNewTabButton, newTabButtonTop,
   onDragStart, onDragOver, onDrop, onDropToUnpinZone,
-}) => (
-  <div
-    className="tab-list"
-    onDragOver={(e) => { e.preventDefault(); e.dataTransfer.dropEffect = 'move'; }}
-    onDrop={onDropToUnpinZone}
-  >
-    {unpinnedTabs.map((t) => (
-      <TabItem
-        key={t.id}
-        tab={t}
-        index={t.originalIndex}
-        isActive={t.id === activeTabId}
-        onSwitch={onSwitch}
-        onPin={onPin}
-        onClose={onClose}
-        onDragStart={(e, idx) => onDragStart(e, idx, t.id)}
-        onDragOver={onDragOver}
-        onDrop={onDrop}
-      />
-    ))}
-    {/* Zen-style new tab button — transparent bg, + icon */}
+}) => {
+  const newTabButton = showNewTabButton ? (
     <div className="tab new-tab-inline" onClick={() => window.astra.newTab()}>
       <span className="tab-favicon new-tab-icon">
         <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round">
@@ -47,7 +32,33 @@ const TabList: React.FC<TabListProps> = ({
       </span>
       <span className="tab-title">New Tab</span>
     </div>
-  </div>
-);
+  ) : null;
+
+  return (
+    <div
+      className="tab-list"
+      onDragOver={(e) => { e.preventDefault(); e.dataTransfer.dropEffect = 'move'; }}
+      onDrop={onDropToUnpinZone}
+    >
+      {newTabButtonTop && newTabButton}
+      {unpinnedTabs.map((t) => (
+        <TabItem
+          key={t.id}
+          tab={t}
+          index={t.originalIndex}
+          isActive={t.id === activeTabId}
+          onSwitch={onSwitch}
+          onPin={onPin}
+          onClose={onClose}
+          middleClickClose={middleClickClose}
+          onDragStart={(e, idx) => onDragStart(e, idx, t.id)}
+          onDragOver={onDragOver}
+          onDrop={onDrop}
+        />
+      ))}
+      {!newTabButtonTop && newTabButton}
+    </div>
+  );
+};
 
 export default TabList;
