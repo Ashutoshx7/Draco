@@ -24,7 +24,9 @@ export class TabManager {
   private tabCounter = 0;
   private onViewCreated: ((view: WebContentsView) => void) | null = null;
   private readonly downloadManager: DownloadManager;
-  private readonly newTabPageUrl: string; // Cached — computed once
+  private readonly newTabPageUrl: string; // Cached default — Draco Home
+  private getNewTabUrlOverride: (() => string | null) | null = null;
+  private onGlanceRequest: ((url: string, x: number, y: number) => void) | null = null;
 
   // Throttle state for sendTabsToSidebar
   private sendPending = false;
@@ -32,6 +34,7 @@ export class TabManager {
   private static readonly SEND_THROTTLE_MS = 100;
   private spaceManager: SpaceManager | null = null;
   private sidebarWidth: number = CONFIG.SIDEBAR_WIDTH;
+  private thumbnailsEnabled = true;
 
   // Zen-style floating content card.
   // The VISUAL gap between sidebar and content is created by CSS padding
@@ -167,6 +170,30 @@ export class TabManager {
     this.spaceManager = sm;
   }
 
+  setThumbnailsEnabled(enabled: boolean): void {
+    this.thumbnailsEnabled = enabled;
+  }
+
+  setAlwaysAskDownload(fn: () => boolean): void {
+    this.downloadManager.setAlwaysAskProvider(fn);
+  }
+
+  setDownloadPath(fn: () => string): void {
+    this.downloadManager.setDownloadPathProvider(fn);
+  }
+
+  /**
+   * Override the default new-tab URL based on user prefs. Returning null means
+   * "use the cached Draco Home page". Called on every createTab() without args.
+   */
+  setNewTabUrlProvider(fn: () => string | null): void {
+    this.getNewTabUrlOverride = fn;
+  }
+
+  setGlanceRequestHandler(fn: (url: string, x: number, y: number) => void): void {
+    this.onGlanceRequest = fn;
+  }
+
   setSidebarWidth(width: number): void {
     this.sidebarWidth = Math.max(
       CONFIG.SIDEBAR_MIN_WIDTH,
@@ -191,7 +218,8 @@ export class TabManager {
     // The view IS created so webContents starts loading in the background (preloading).
     view.setBounds({ x: 0, y: 0, width: 0, height: 0 });
 
-    const loadUrl = url || this.newTabPageUrl;
+    const override = !url ? this.getNewTabUrlOverride?.() : null;
+    const loadUrl = url || override || this.newTabPageUrl;
     view.webContents.loadURL(loadUrl);
 
     this.attachTabEvents(id, view);
@@ -519,6 +547,7 @@ export class TabManager {
       isLoading: t.isLoading, isSecure: t.isSecure,
       isPinned: t.isPinned, isHibernated: t.isHibernated,
       zoomLevel: t.zoomLevel, spaceId: t.spaceId,
+      thumbnail: t.thumbnail,
     }));
     this.sidebarView.webContents.send(IPC.TABS_UPDATED, {
       tabs: tabData,
@@ -606,7 +635,19 @@ export class TabManager {
 
     view.webContents.on('did-stop-loading', () => {
       const tab = this.findTab(id);
-      if (tab) { tab.isLoading = false; this.scheduleSend(); }
+      if (!tab) return;
+      tab.isLoading = false;
+      if (this.thumbnailsEnabled) {
+        view.webContents.capturePage({ x: 0, y: 0, width: 320, height: 200 }).then(image => {
+          const t = this.findTab(id);
+          if (t) {
+            t.thumbnail = image.toDataURL();
+            this.scheduleSend();
+          }
+        }).catch(() => { /* page navigated away or view destroyed */ });
+      } else {
+        this.scheduleSend();
+      }
     });
 
     view.webContents.on('found-in-page', (_e, result) => {
@@ -614,6 +655,16 @@ export class TabManager {
         activeMatchOrdinal: result.activeMatchOrdinal,
         matches: result.matches,
       });
+    });
+
+    view.webContents.on('console-message', (_e, _level, message) => {
+      if (!message.startsWith('__ASTRA_GLANCE_OPEN__:')) return;
+      try {
+        const data = JSON.parse(message.slice('__ASTRA_GLANCE_OPEN__:'.length));
+        if (typeof data.url === 'string') {
+          this.onGlanceRequest?.(data.url, Number(data.x) || 0, Number(data.y) || 0);
+        }
+      } catch { /* ignore malformed page messages */ }
     });
   }
 
